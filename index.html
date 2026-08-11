@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>SAYFLOW — say it out loud</title>
+
+<meta name="theme-color" content="#0D1416">
+<meta name="description" content="Type an English word or sentence and hear it spoken, word by word.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SAYFLOW">
+<link id="mf" rel="manifest">
+<link id="ati" rel="apple-touch-icon">
+
+<style>
+  :root{
+    --ink:#0D1416;
+    --panel:#141F23;
+    --panel2:#1B282D;
+    --line:#26363C;
+    --sand:#EDE6D8;
+    --mute:#7D949B;
+    --amber:#E9B44C;
+    --amber-soft:rgba(233,180,76,.15);
+    --amber-edge:rgba(233,180,76,.42);
+
+    --serif:'Iowan Old Style','Charter','Palatino Linotype',Palatino,'Book Antiqua',Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+    --mono:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--ink);
+    color:var(--sand);
+    font-family:var(--sans);
+    font-size:16px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overscroll-behavior-y:none;
+  }
+  .wrap{
+    max-width:820px;
+    margin:0 auto;
+    padding:calc(16px + env(safe-area-inset-top))
+            calc(12px + env(safe-area-inset-right))
+            calc(24px + env(safe-area-inset-bottom))
+            calc(12px + env(safe-area-inset-left));
+  }
+
+  /* ---------- header ---------- */
+  .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:22px}
+  .brand{
+    font-family:var(--mono);font-size:12px;letter-spacing:.24em;
+    text-transform:uppercase;color:var(--sand);font-weight:600;
+  }
+  .brand i{color:var(--amber);font-style:normal}
+  .status{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    color:var(--mute);text-transform:uppercase;display:flex;align-items:center;gap:6px;
+  }
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--mute);flex:none}
+  .dot.on{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft)}
+
+  /* ---------- stage (signature) ---------- */
+  .stage{
+    min-height:168px;
+    padding:6px 0 14px;
+    font-family:var(--serif);
+    font-size:29px;
+    line-height:1.44;
+    letter-spacing:-.005em;
+    display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px 0;
+  }
+  .w{
+    display:inline-block;
+    padding:1px 5px;
+    margin:0 1px;
+    border-radius:5px;
+    color:var(--sand);
+    cursor:pointer;
+    transition:background .11s ease,color .11s ease,transform .11s ease;
+    transform:translateY(0);
+  }
+  .w:active{background:var(--panel2)}
+  .w.on{
+    background:var(--amber-soft);
+    color:var(--amber);
+    transform:translateY(-1.5px);
+  }
+  .w.done{color:#B9AE97}
+  .empty{
+    font-family:var(--serif);font-size:24px;font-style:italic;
+    color:#3E5158;line-height:1.5;padding:2px 0;
+  }
+  .meter{height:2px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:22px}
+  .meter b{display:block;height:100%;width:0;background:var(--amber);transition:width .14s linear}
+
+  /* ---------- input ---------- */
+  .field{position:relative;margin-bottom:14px}
+  textarea{
+    width:100%;min-height:88px;resize:none;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:13px 14px 30px;
+    color:var(--sand);
+    font-family:var(--sans);font-size:16px;line-height:1.45;
+    outline:none;
+    transition:border-color .15s ease;
+  }
+  textarea::placeholder{color:#4C6169}
+  textarea:focus{border-color:var(--amber-edge)}
+  .count{
+    position:absolute;right:12px;bottom:9px;
+    font-family:var(--mono);font-size:10.5px;color:#4C6169;pointer-events:none;
+  }
+
+  /* ---------- controls ---------- */
+  .row{display:flex;gap:9px;align-items:center}
+  .row + .row{margin-top:12px}
+
+  .speak{
+    flex:1;height:54px;border:none;border-radius:13px;
+    background:var(--amber);color:#161009;
+    font-family:var(--sans);font-size:16.5px;font-weight:650;letter-spacing:.01em;
+    display:flex;align-items:center;justify-content:center;gap:9px;
+    cursor:pointer;transition:filter .12s ease,transform .08s ease;
+  }
+  .speak:active{transform:scale(.985);filter:brightness(.93)}
+  .speak:disabled{background:var(--panel2);color:#4C6169;cursor:default}
+  .speak svg{flex:none}
+
+  .icon{
+    width:54px;height:54px;flex:none;
+    background:var(--panel);border:1px solid var(--line);border-radius:13px;
+    color:var(--mute);display:flex;align-items:center;justify-content:center;cursor:pointer;
+    transition:color .12s ease,border-color .12s ease;
+  }
+  .icon:active{border-color:var(--amber-edge);color:var(--amber)}
+  .icon:disabled{opacity:.4;cursor:default}
+
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:3px;gap:2px}
+  .seg button{
+    flex:1;height:34px;border:none;background:none;border-radius:8px;
+    font-family:var(--mono);font-size:12px;color:var(--mute);cursor:pointer;
+    transition:background .12s ease,color .12s ease;
+  }
+  .seg button.on{background:var(--panel2);color:var(--amber)}
+
+  .ctl{
+    background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    padding:10px 13px;flex:1;min-width:0;
+  }
+  .ctl .lab{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--mute);display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;
+  }
+  .ctl .lab b{color:var(--amber);font-weight:600;letter-spacing:.04em;font-size:11.5px}
+
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:100%;height:16px;background:none;margin:0;display:block;
+  }
+  input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line);border-radius:3px}
+  input[type=range]::-moz-range-track{height:3px;background:var(--line);border-radius:3px}
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:17px;height:17px;border-radius:50%;
+    background:var(--amber);margin-top:-7px;border:none;
+  }
+  input[type=range]::-moz-range-thumb{width:17px;height:17px;border-radius:50%;background:var(--amber);border:none}
+
+  select{
+    -webkit-appearance:none;appearance:none;width:100%;
+    background:transparent;border:none;outline:none;
+    color:var(--sand);font-family:var(--sans);font-size:14.5px;
+    padding:0 18px 0 0;margin:0;
+    background-image:linear-gradient(45deg,transparent 50%,var(--mute) 50%),linear-gradient(135deg,var(--mute) 50%,transparent 50%);
+    background-position:calc(100% - 6px) 8px,calc(100% - 2px) 8px;
+    background-size:4px 4px,4px 4px;background-repeat:no-repeat;
+    text-overflow:ellipsis;cursor:pointer;
+  }
+  select option{background:var(--panel2);color:var(--sand)}
+
+  /* ---------- recent ---------- */
+  .recent{margin-top:26px}
+  .rhead{
+    font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+    color:var(--mute);display:flex;justify-content:space-between;align-items:center;
+    padding-bottom:9px;border-bottom:1px solid var(--line);
+  }
+  .rhead button{
+    background:none;border:none;color:#4C6169;font-family:var(--mono);
+    font-size:10px;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;padding:0;
+  }
+  .ritem{
+    display:flex;align-items:center;gap:10px;
+    padding:12px 0;border-bottom:1px solid var(--line);
+  }
+  .ritem span{
+    flex:1;min-width:0;font-family:var(--serif);font-size:16px;color:#C6BCA8;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
+  }
+  .ritem:active span{color:var(--amber)}
+  .ritem button{
+    flex:none;width:26px;height:26px;border:none;background:none;color:#3E5158;
+    font-size:15px;line-height:1;cursor:pointer;border-radius:6px;
+  }
+  .rempty{font-size:13.5px;color:#4C6169;padding:14px 0}
+
+  .foot{
+    margin-top:26px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
+    color:#3E5158;text-transform:uppercase;display:flex;justify-content:space-between;gap:10px;
+  }
+  .install{
+    background:none;border:1px solid var(--line);border-radius:7px;color:var(--mute);
+    font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    padding:4px 9px;cursor:pointer;display:none;
+  }
+  .install.show{display:block}
+
+  .warn{
+    background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--amber);
+    border-radius:9px;padding:12px 14px;font-size:13.5px;color:var(--mute);
+    margin-bottom:16px;display:none;
+  }
+  .warn.show{display:block}
+
+  :focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+  @media (max-width:380px){
+    .wrap{
+      padding-left:calc(9px + env(safe-area-inset-left));
+      padding-right:calc(9px + env(safe-area-inset-right));
+    }
+    .stage{font-size:25px;min-height:150px}
+    .speak{font-size:15.5px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">SAY<i>FLOW</i></div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">ready</span></div>
+  </div>
+
+  <div class="warn" id="warn">This browser doesn't support speech synthesis. Try Safari, Chrome, or Edge.</div>
+
+  <div class="stage" id="stage"></div>
+  <div class="meter"><b id="meter"></b></div>
+
+  <div class="field">
+    <textarea id="text" rows="3" autocapitalize="sentences" autocomplete="off" spellcheck="true"
+      placeholder="Could you say that again, please?"></textarea>
+    <div class="count" id="count">0</div>
+  </div>
+
+  <div class="row">
+    <button class="speak" id="speak">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 6h2.4L9 2.6v10.8L5.4 10H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/><path d="M11.2 5.1a.8.8 0 0 1 1.1.1A4.2 4.2 0 0 1 13.4 8a4.2 4.2 0 0 1-1.1 2.8.8.8 0 1 1-1.2-1 2.6 2.6 0 0 0 .7-1.8 2.6 2.6 0 0 0-.7-1.8.8.8 0 0 1 .1-1.1z"/></svg>
+      <span id="speakLabel">Speak</span>
+    </button>
+    <button class="icon" id="stop" title="Stop" disabled aria-label="Stop">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>
+    </button>
+  </div>
+
+  <div class="row">
+    <div class="ctl">
+      <div class="lab"><span>Speed</span><b id="rateVal">1.00×</b></div>
+      <input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="1">
+    </div>
+    <div class="ctl" style="flex:0 0 132px">
+      <div class="lab"><span>Repeat</span></div>
+      <div class="seg" id="rep" style="border:none;background:none;padding:0">
+        <button data-n="1" class="on">1×</button>
+        <button data-n="2">2×</button>
+        <button data-n="3">3×</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="ctl">
+      <div class="lab"><span>Voice</span><b id="vlang">—</b></div>
+      <select id="voice"><option>Loading…</option></select>
+    </div>
+  </div>
+
+  <div class="recent">
+    <div class="rhead"><span>Recent</span><button id="clear">Clear</button></div>
+    <div id="rlist"><div class="rempty">Sentences you speak will collect here.</div></div>
+  </div>
+
+  <div class="foot">
+    <span id="hint">tap a word to hear it alone</span>
+    <button class="install" id="install">Install</button>
+  </div>
+
+</div>
+
+<script>
+(function(){
+'use strict';
+
+const synth = window.speechSynthesis;
+const $ = id => document.getElementById(id);
+const stageEl=$('stage'), meterEl=$('meter'), textEl=$('text'), countEl=$('count'),
+      speakBtn=$('speak'), speakLabel=$('speakLabel'), stopBtn=$('stop'),
+      rateEl=$('rate'), rateVal=$('rateVal'), repEl=$('rep'), voiceEl=$('voice'),
+      vlangEl=$('vlang'), rlistEl=$('rlist'), dotEl=$('dot'), statusEl=$('statusText');
+
+if(!synth){ $('warn').classList.add('show'); speakBtn.disabled = true; }
+
+/* ---------- storage (falls back to memory if blocked) ---------- */
+const store = (function(){
+  let ok = true;
+  try { localStorage.setItem('__sf','1'); localStorage.removeItem('__sf'); } catch(e){ ok = false; }
+  const mem = {};
+  return {
+    get(k,d){ try{ const v = ok ? localStorage.getItem(k) : mem[k]; return v==null ? d : JSON.parse(v); }catch(e){ return d; } },
+    set(k,v){ try{ const s = JSON.stringify(v); if(ok) localStorage.setItem(k,s); else mem[k]=s; }catch(e){} }
+  };
+})();
+
+/* ---------- state ---------- */
+let tokens = [];        // {w, start, end}
+let voices = [];
+let rate = store.get('rate', 1);
+let repeat = store.get('repeat', 1);
+let history = store.get('history', []);
+let remaining = 0;
+let gotBoundary = false;
+let unlocked = false;
+let singleWordMode = false;
+
+const ua = navigator.userAgent;
+const isApple = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg/.test(ua));
+
+/* ---------- iOS audio unlock: first gesture must contain a speak() ---------- */
+function unlock(){
+  if(unlocked || !synth) return;
+  unlocked = true;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); } catch(e){}
+}
+document.addEventListener('touchend', unlock, {passive:true, once:true});
+document.addEventListener('mousedown', unlock, {once:true});
+
+/* ---------- tokenize + render stage ---------- */
+function tokenize(t){
+  const out = [], re = /\S+/g; let m;
+  while((m = re.exec(t))) out.push({ w:m[0], start:m.index, end:m.index + m[0].length });
+  return out;
+}
+
+function renderStage(){
+  const t = textEl.value;
+  tokens = tokenize(t);
+  countEl.textContent = t.length;
+  stageEl.innerHTML = '';
+  if(!tokens.length){
+    const d = document.createElement('div');
+    d.className = 'empty';
+    d.textContent = 'Type an English word or sentence below.';
+    stageEl.appendChild(d);
+    meterEl.style.width = '0';
+    return;
+  }
+  tokens.forEach((tok,i) => {
+    const s = document.createElement('span');
+    s.className = 'w'; s.dataset.i = i; s.textContent = tok.w;
+    stageEl.appendChild(s);
+    stageEl.appendChild(document.createTextNode(' '));
+  });
+  meterEl.style.width = '0';
+}
+
+function setActive(i){
+  const els = stageEl.querySelectorAll('.w');
+  els.forEach((el,k) => {
+    el.classList.toggle('on', k === i);
+    el.classList.toggle('done', k < i);
+  });
+  if(tokens.length) meterEl.style.width = ((i+1)/tokens.length*100) + '%';
+}
+
+function clearActive(){
+  stageEl.querySelectorAll('.w').forEach(el => el.classList.remove('on','done'));
+  meterEl.style.width = '0';
+}
+
+/* ---------- word clock ----------
+   A running clock drives the highlight instead of pre-set timers, so it can be
+   corrected mid-sentence. Real boundary events snap its phase and adjust its
+   speed; when they never arrive (iOS), the learned pace carries it alone.      */
+
+const LEAD = 0.07;          // light each word this many seconds early
+let plan = [];              // per-word start, in "seconds at rate 1.0"
+let totalUnits = 0;
+let unitsPerSec = 1;
+let clockStart = 0;         // phase origin, adjusted by resync
+let speechT0 = 0;           // true onstart time, never adjusted — used to learn
+let lastIdx = -1;
+let rafId = null;
+let clockOn = false;
+
+function syllables(w){
+  w = w.toLowerCase().replace(/[^a-z]/g,'');
+  if(!w) return 1;
+  const m = w.replace(/e$/,'').match(/[aeiouy]+/g);
+  return Math.max(1, m ? m.length : 1);
+}
+
+function buildPlan(){
+  plan = []; let acc = 0;
+  tokens.forEach(tok => {
+    plan.push(acc);
+    acc += 0.175 * syllables(tok.w) + 0.10;
+    if(/[.,!?;:—]$/.test(tok.w)) acc += 0.18;
+  });
+  totalUnits = acc;
+}
+
+/* paceMul: how much slower this voice actually is than the model. 1 = spot on. */
+function paceMul(){
+  const cal = store.get('pace', {});
+  const m = cal[voiceEl.value || 'default'];
+  return (m && m > 0.4 && m < 2.5) ? m : 1;
+}
+function learnPace(actualSec){
+  if(!(actualSec > 0.35) || totalUnits < 0.6) return;
+  const observed = totalUnits / actualSec;      // units per second
+  const m = rate / observed;
+  if(!(m > 0.4 && m < 2.5)) return;
+  const cal = store.get('pace', {});
+  const k = voiceEl.value || 'default';
+  cal[k] = cal[k] ? cal[k] * 0.6 + m * 0.4 : m;
+  store.set('pace', cal);
+}
+
+function idxForUnits(u){
+  for(let k = plan.length - 1; k >= 0; k--) if(u >= plan[k]) return k;
+  return 0;
+}
+function indexFromChar(ci){
+  for(let i = tokens.length - 1; i >= 0; i--) if(ci >= tokens[i].start) return i;
+  return 0;
+}
+
+function startClock(){
+  stopClock();
+  buildPlan();
+  unitsPerSec = rate / paceMul();
+  speechT0 = clockStart = performance.now();
+  lastIdx = -1;
+  clockOn = true;
+  tick();
+}
+function tick(){
+  if(!clockOn) return;
+  const u = ((performance.now() - clockStart) / 1000 + LEAD) * unitsPerSec;
+  const i = Math.min(idxForUnits(u), tokens.length - 1);
+  if(i !== lastIdx){ lastIdx = i; setActive(i); }
+  if(u < totalUnits) rafId = requestAnimationFrame(tick);
+}
+function stopClock(){
+  clockOn = false;
+  if(rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+}
+
+/* A boundary event is ground truth: correct the speed, then snap the phase. */
+function resync(charIndex){
+  const i = indexFromChar(charIndex);
+  const now = performance.now();
+  const elapsed = (now - speechT0) / 1000;
+  if(elapsed > 0.45 && plan[i] > 0.8){
+    const observed = plan[i] / elapsed;
+    if(observed > 0.3 && observed < 4) unitsPerSec = unitsPerSec * 0.4 + observed * 0.6;
+  }
+  clockStart = now - (plan[i] / unitsPerSec - LEAD) * 1000;
+  if(i !== lastIdx){ lastIdx = i; setActive(i); }
+  if(!clockOn){ clockOn = true; tick(); }
+}
+
+/* ---------- voices ---------- */
+function loadVoices(){
+  if(!synth) return;
+  const all = synth.getVoices();
+  if(!all.length) return;
+  const en = all.filter(v => /^en/i.test(v.lang));
+  voices = (en.length ? en : all).sort((a,b) =>
+    (b.localService - a.localService) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+
+  const saved = store.get('voice', null);
+  voiceEl.innerHTML = '';
+  voices.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v.voiceURI;
+    o.textContent = v.name + (v.localService ? '' : ' · online');
+    voiceEl.appendChild(o);
+  });
+  const pick = voices.find(v => v.voiceURI === saved)
+            || voices.find(v => v.localService && /en[-_]US/i.test(v.lang))
+            || voices.find(v => v.localService)
+            || voices[0];
+  if(pick){ voiceEl.value = pick.voiceURI; vlangEl.textContent = pick.lang.replace('_','-'); }
+}
+if(synth){
+  loadVoices();
+  synth.onvoiceschanged = loadVoices;
+  [120, 400, 1000, 2200].forEach(ms => setTimeout(loadVoices, ms)); // iOS populates late
+}
+function currentVoice(){ return voices.find(v => v.voiceURI === voiceEl.value) || null; }
+
+/* ---------- speaking ---------- */
+function setBusy(on){
+  dotEl.classList.toggle('on', on);
+  statusEl.textContent = on ? 'speaking' : 'ready';
+  stopBtn.disabled = !on;
+  speakLabel.textContent = on ? 'Speaking…' : 'Speak';
+}
+
+function utter(str){
+  const u = new SpeechSynthesisUtterance(str);
+  const v = currentVoice();
+  if(v){ u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
+  u.rate = rate; u.pitch = 1; u.volume = 1;
+  return u;
+}
+
+function speakNow(str, onDone){
+  const u = utter(str);
+  gotBoundary = false;
+
+  u.onstart = () => {
+    setBusy(true);
+    if(!singleWordMode) startClock();   // no blind delay — corrections come later
+  };
+  u.onboundary = (e) => {
+    if(singleWordMode) return;
+    if(e.name && e.name !== 'word') return;
+    gotBoundary = true;
+    resync(e.charIndex);
+  };
+  u.onend = () => {
+    if(!singleWordMode){
+      learnPace((performance.now() - speechT0) / 1000);
+      stopClock();
+    }
+    onDone && onDone();
+  };
+  u.onerror = () => { stopClock(); setBusy(false); clearActive(); };
+
+  synth.cancel();
+  // Safari drops an utterance queued in the same tick as cancel()
+  setTimeout(() => synth.speak(u), 80);
+}
+
+function speakSentence(){
+  if(!synth) return;
+  const t = textEl.value.trim();
+  if(!t) { textEl.focus(); return; }
+  unlock();
+  singleWordMode = false;
+  renderStage();
+  remaining = repeat;
+  pushHistory(t);
+
+  const run = () => {
+    speakNow(t, () => {
+      remaining--;
+      if(remaining > 0){
+        setTimeout(() => { clearActive(); run(); }, 420);
+      } else {
+        setBusy(false);
+        setTimeout(clearActive, 700);
+      }
+    });
+  };
+  run();
+}
+
+function speakWord(i){
+  if(!synth || !tokens[i]) return;
+  unlock();
+  stopAll(true);
+  singleWordMode = true;
+  const els = stageEl.querySelectorAll('.w');
+  els.forEach((el,k) => { el.classList.remove('done'); el.classList.toggle('on', k === i); });
+  const clean = tokens[i].w.replace(/^[^\w'’-]+|[^\w'’-]+$/g,'') || tokens[i].w;
+  speakNow(clean, () => {
+    setBusy(false);
+    setTimeout(() => { els.forEach(el => el.classList.remove('on')); }, 450);
+  });
+}
+
+function stopAll(quiet){
+  stopClock();
+  remaining = 0;
+  if(synth) synth.cancel();
+  setBusy(false);
+  if(!quiet) clearActive();
+}
+
+/* keep long text alive in Chrome (its engine stalls near 15s) */
+if(synth && !isApple){
+  setInterval(() => {
+    if(synth.speaking && !synth.paused){ synth.pause(); synth.resume(); }
+  }, 9500);
+}
+
+/* ---------- history ---------- */
+function pushHistory(t){
+  history = history.filter(x => x !== t);
+  history.unshift(t);
+  if(history.length > 14) history.length = 14;
+  store.set('history', history);
+  renderHistory();
+}
+function renderHistory(){
+  rlistEl.innerHTML = '';
+  if(!history.length){
+    rlistEl.innerHTML = '<div class="rempty">Sentences you speak will collect here.</div>';
+    return;
+  }
+  history.forEach((t,i) => {
+    const row = document.createElement('div'); row.className = 'ritem';
+    const s = document.createElement('span'); s.textContent = t;
+    s.onclick = () => { textEl.value = t; renderStage(); speakSentence(); window.scrollTo({top:0,behavior:'smooth'}); };
+    const x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label','Remove');
+    x.onclick = () => { history.splice(i,1); store.set('history', history); renderHistory(); };
+    row.append(s,x); rlistEl.appendChild(row);
+  });
+}
+
+/* ---------- wiring ---------- */
+textEl.addEventListener('input', renderStage);
+stageEl.addEventListener('click', e => {
+  const el = e.target.closest('.w');
+  if(el) speakWord(+el.dataset.i);
+});
+speakBtn.addEventListener('click', speakSentence);
+stopBtn.addEventListener('click', () => stopAll(false));
+
+rateEl.value = rate;
+rateVal.textContent = Number(rate).toFixed(2) + '×';
+rateEl.addEventListener('input', () => {
+  rate = parseFloat(rateEl.value);
+  rateVal.textContent = rate.toFixed(2) + '×';
+  store.set('rate', rate);
+});
+rateVal.addEventListener('click', () => {
+  rate = 1; rateEl.value = 1; rateVal.textContent = '1.00×'; store.set('rate', 1);
+});
+
+repEl.querySelectorAll('button').forEach(b => {
+  if(+b.dataset.n === repeat) { repEl.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); }
+  b.addEventListener('click', () => {
+    repeat = +b.dataset.n;
+    store.set('repeat', repeat);
+    repEl.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  });
+});
+
+voiceEl.addEventListener('change', () => {
+  store.set('voice', voiceEl.value);
+  const v = currentVoice();
+  if(v) vlangEl.textContent = v.lang.replace('_','-');
+});
+
+$('clear').addEventListener('click', () => { history = []; store.set('history', history); renderHistory(); });
+
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){ stopAll(false); }
+  if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); speakSentence(); }
+});
+document.addEventListener('visibilitychange', () => { if(document.hidden) stopAll(false); });
+window.addEventListener('pagehide', () => { if(synth) synth.cancel(); });
+
+if(!('ontouchstart' in window)) $('hint').textContent = '⌘↵ speak · esc stop · click a word';
+
+/* ---------- PWA: inline manifest + generated icons ---------- */
+function makeIcon(size){
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const x = c.getContext('2d');
+  x.fillStyle = '#0D1416'; x.fillRect(0,0,size,size);
+  const cx = size*0.33, cy = size*0.5;
+  x.fillStyle = '#EDE6D8';
+  x.beginPath(); x.arc(cx, cy, size*0.085, 0, Math.PI*2); x.fill();
+  x.strokeStyle = '#E9B44C'; x.lineCap = 'round'; x.lineWidth = size*0.07;
+  [0.17,0.275,0.38].forEach((r,i) => {
+    x.globalAlpha = 1 - i*0.3;
+    x.beginPath(); x.arc(cx, cy, size*r, -0.82, 0.82); x.stroke();
+  });
+  return c.toDataURL('image/png');
+}
+try{
+  const i192 = makeIcon(192), i512 = makeIcon(512);
+  $('ati').href = makeIcon(180);
+  const mfJSON = {
+    name:'SAYFLOW', short_name:'SAYFLOW',
+    description:'Type an English word or sentence and hear it spoken, word by word.',
+    start_url:'./', scope:'./', display:'standalone', orientation:'portrait',
+    background_color:'#0D1416', theme_color:'#0D1416', lang:'en',
+    icons:[
+      {src:i192, sizes:'192x192', type:'image/png', purpose:'any'},
+      {src:i512, sizes:'512x512', type:'image/png', purpose:'any'},
+      {src:i512, sizes:'512x512', type:'image/png', purpose:'maskable'}
+    ]
+  };
+  $('mf').href = URL.createObjectURL(new Blob([JSON.stringify(mfJSON)], {type:'application/manifest+json'}));
+}catch(e){}
+
+let deferred = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferred = e; $('install').classList.add('show');
+});
+$('install').addEventListener('click', async () => {
+  if(!deferred) return;
+  deferred.prompt(); await deferred.userChoice;
+  deferred = null; $('install').classList.remove('show');
+});
+
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+/* ---------- boot ---------- */
+textEl.value = store.get('last', '');
+renderStage();
+renderHistory();
+textEl.addEventListener('input', () => store.set('last', textEl.value));
+
+})();
+</script>
+</body>
+</html>
