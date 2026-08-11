@@ -92,6 +92,17 @@
     transform:translateY(-1.5px);
   }
   .w.done{color:#B9AE97}
+  .w.ko{
+    font-family:'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',system-ui,sans-serif;
+    font-size:.76em;letter-spacing:-.01em;color:#93A9B0;
+  }
+  .w.ko.done{color:#5F757C}
+  .w.ko.on{color:var(--amber);background:var(--amber-soft)}
+  .sep{
+    display:inline-block;padding:1px 4px;color:#3E5158;
+    font-family:var(--mono);font-size:.5em;vertical-align:middle;user-select:none;
+  }
+  .brk{flex-basis:100%;height:9px}
   .empty{
     font-family:var(--serif);font-size:24px;font-style:italic;
     color:#3E5158;line-height:1.5;padding:2px 0;
@@ -257,8 +268,8 @@
   <div class="meter"><b id="meter"></b></div>
 
   <div class="field">
-    <textarea id="text" rows="3" autocapitalize="sentences" autocomplete="off" spellcheck="true"
-      placeholder="Could you say that again, please?"></textarea>
+    <textarea id="text" rows="3" autocapitalize="sentences" autocomplete="off" spellcheck="false"
+      placeholder="Could you say that again? / 다시 말씀해 주시겠어요?"></textarea>
     <div class="count" id="count">0</div>
   </div>
 
@@ -287,10 +298,27 @@
     </div>
   </div>
 
+  <div class="row" id="orderRow" style="display:none">
+    <div class="ctl">
+      <div class="lab"><span>Order</span><b id="orderNote"></b></div>
+      <div class="seg" id="order" style="border:none;background:none;padding:0">
+        <button data-o="en-ko" class="on">EN → 한국어</button>
+        <button data-o="ko-en">한국어 → EN</button>
+      </div>
+    </div>
+  </div>
+
   <div class="row">
     <div class="ctl">
-      <div class="lab"><span>Voice</span><b id="vlang">—</b></div>
+      <div class="lab"><span>English voice</span><b id="vlang">—</b></div>
       <select id="voice"><option>Loading…</option></select>
+    </div>
+  </div>
+
+  <div class="row" id="kvoiceRow" style="display:none">
+    <div class="ctl">
+      <div class="lab"><span>Korean voice</span><b id="klang">—</b></div>
+      <select id="kvoice"></select>
     </div>
   </div>
 
@@ -300,7 +328,7 @@
   </div>
 
   <div class="foot">
-    <span id="hint">tap a word to hear it alone</span>
+    <span id="hint">tap any word to hear it alone</span>
     <button class="install" id="install">Install</button>
   </div>
 
@@ -315,7 +343,9 @@ const $ = id => document.getElementById(id);
 const stageEl=$('stage'), meterEl=$('meter'), textEl=$('text'), countEl=$('count'),
       speakBtn=$('speak'), speakLabel=$('speakLabel'), stopBtn=$('stop'),
       rateEl=$('rate'), rateVal=$('rateVal'), repEl=$('rep'), voiceEl=$('voice'),
-      vlangEl=$('vlang'), rlistEl=$('rlist'), dotEl=$('dot'), statusEl=$('statusText');
+      vlangEl=$('vlang'), rlistEl=$('rlist'), dotEl=$('dot'), statusEl=$('statusText'),
+      kvoiceEl=$('kvoice'), klangEl=$('klang'), kvoiceRow=$('kvoiceRow'),
+      orderRow=$('orderRow'), orderEl=$('order'), orderNote=$('orderNote');
 
 if(!synth){ $('warn').classList.add('show'); speakBtn.disabled = true; }
 
@@ -331,15 +361,18 @@ const store = (function(){
 })();
 
 /* ---------- state ---------- */
-let tokens = [];        // {w, start, end}
+let tokens = [];        // {w, start, end, lang, seg, sep, brk}
+let segments = [];      // {lang, lo, hi, line, text}
 let voices = [];
+let koVoices = [];
+let hasKo = false, hasEn = false;
 let rate = store.get('rate', 1);
 let repeat = store.get('repeat', 1);
+let order = store.get('order', 'en-ko');
 let history = store.get('history', []);
 let remaining = 0;
 let gotBoundary = false;
 let unlocked = false;
-let singleWordMode = false;
 
 const ua = navigator.userAgent;
 const isApple = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg/.test(ua));
@@ -353,38 +386,101 @@ function unlock(){
 document.addEventListener('touchend', unlock, {passive:true, once:true});
 document.addEventListener('mousedown', unlock, {once:true});
 
-/* ---------- tokenize + render stage ---------- */
+/* ---------- tokenize → language segments → stage ---------- */
+const RE_HANGUL = /[\u3131-\u318E\uAC00-\uD7A3]/g;
+const RE_LATIN  = /[A-Za-z]/g;
+const SEPARATORS = ['/','|','=','—','–','→','::',':','-','·'];
+
+function langOfWord(w){
+  const k = (w.match(RE_HANGUL) || []).length;
+  const e = (w.match(RE_LATIN) || []).length;
+  if(k > e) return 'ko';
+  if(e > k) return 'en';
+  return null;                     // digits, punctuation — inherit neighbours
+}
+
 function tokenize(t){
-  const out = [], re = /\S+/g; let m;
-  while((m = re.exec(t))) out.push({ w:m[0], start:m.index, end:m.index + m[0].length });
+  const out = [], re = /\S+/g; let m, prevEnd = 0;
+  while((m = re.exec(t))){
+    const tok = { w:m[0], start:m.index, end:m.index + m[0].length };
+    tok.brk = out.length > 0 && t.slice(prevEnd, m.index).includes('\n');
+    tok.sep = SEPARATORS.indexOf(m[0]) !== -1;
+    tok.lang = tok.sep ? null : langOfWord(m[0]);
+    prevEnd = tok.end;
+    out.push(tok);
+  }
   return out;
+}
+
+/* Group consecutive same-language words. A separator or a newline forces a break. */
+function buildSegments(raw){
+  segments = [];
+  let cur = null, line = 0;
+  tokens.forEach((t,i) => {
+    if(t.brk){ line++; cur = null; }
+    if(t.sep){ cur = null; t.seg = -1; return; }
+
+    let L = t.lang || (cur && cur.lang);
+    if(!L){                                    // leading digits/punctuation: look ahead
+      for(let j = i + 1; j < tokens.length; j++){
+        if(tokens[j].sep || tokens[j].brk) break;
+        if(tokens[j].lang){ L = tokens[j].lang; break; }
+      }
+      L = L || 'en';
+    }
+    if(!cur || cur.lang !== L){
+      cur = { lang:L, lo:i, hi:i+1, line:line };
+      segments.push(cur);
+    } else cur.hi = i + 1;
+    t.lang = L;
+    t.seg = segments.length - 1;
+  });
+  segments.forEach(s => { s.text = raw.slice(tokens[s.lo].start, tokens[s.hi-1].end); });
+  hasKo = segments.some(s => s.lang === 'ko');
+  hasEn = segments.some(s => s.lang === 'en');
+  updateModeUI();
 }
 
 function renderStage(){
   const t = textEl.value;
   tokens = tokenize(t);
+  buildSegments(t);
   countEl.textContent = t.length;
   stageEl.innerHTML = '';
   if(!tokens.length){
     const d = document.createElement('div');
     d.className = 'empty';
-    d.textContent = 'Type an English word or sentence below.';
+    d.textContent = 'Type an English word or sentence — add the Korean after it.';
     stageEl.appendChild(d);
     meterEl.style.width = '0';
     return;
   }
   tokens.forEach((tok,i) => {
+    if(tok.brk){
+      const b = document.createElement('div'); b.className = 'brk';
+      stageEl.appendChild(b);
+    }
     const s = document.createElement('span');
-    s.className = 'w'; s.dataset.i = i; s.textContent = tok.w;
+    s.className = tok.sep ? 'sep' : ('w' + (tok.lang === 'ko' ? ' ko' : ''));
+    if(!tok.sep) s.dataset.i = i;
+    s.textContent = tok.w;
     stageEl.appendChild(s);
     stageEl.appendChild(document.createTextNode(' '));
   });
   meterEl.style.width = '0';
 }
 
+/* Pair controls only appear once there is actually Korean in the text. */
+function updateModeUI(){
+  const pair = hasKo && hasEn;
+  if(orderRow) orderRow.style.display = pair ? 'flex' : 'none';
+  if(kvoiceRow) kvoiceRow.style.display = hasKo ? 'flex' : 'none';
+  if(orderNote) orderNote.textContent = hasKo && !koVoices.length ? 'no Korean voice' : '';
+}
+
 function setActive(i){
-  const els = stageEl.querySelectorAll('.w');
-  els.forEach((el,k) => {
+  stageEl.querySelectorAll('.w').forEach(el => {
+    const k = +el.dataset.i;
     el.classList.toggle('on', k === i);
     el.classList.toggle('done', k < i);
   });
@@ -410,28 +506,31 @@ let speechT0 = 0;           // true onstart time, never adjusted — used to lea
 let lastIdx = -1;
 let rafId = null;
 let clockOn = false;
+let segLo = 0, segHi = 0, segChar0 = 0, segVoiceKey = 'default';
 
 function syllables(w){
+  const h = (w.match(/[\uAC00-\uD7A3]/g) || []).length;
+  if(h) return h;                                   // Hangul: one block = one syllable
   w = w.toLowerCase().replace(/[^a-z]/g,'');
   if(!w) return 1;
   const m = w.replace(/e$/,'').match(/[aeiouy]+/g);
   return Math.max(1, m ? m.length : 1);
 }
 
-function buildPlan(){
+function buildPlan(lo, hi){
   plan = []; let acc = 0;
-  tokens.forEach(tok => {
+  for(let i = lo; i < hi; i++){
     plan.push(acc);
-    acc += 0.175 * syllables(tok.w) + 0.10;
-    if(/[.,!?;:—]$/.test(tok.w)) acc += 0.18;
-  });
+    acc += 0.175 * syllables(tokens[i].w) + 0.10;
+    if(/[.,!?;:—]$/.test(tokens[i].w)) acc += 0.18;
+  }
   totalUnits = acc;
 }
 
 /* paceMul: how much slower this voice actually is than the model. 1 = spot on. */
 function paceMul(){
   const cal = store.get('pace', {});
-  const m = cal[voiceEl.value || 'default'];
+  const m = cal[segVoiceKey];
   return (m && m > 0.4 && m < 2.5) ? m : 1;
 }
 function learnPace(actualSec){
@@ -440,23 +539,25 @@ function learnPace(actualSec){
   const m = rate / observed;
   if(!(m > 0.4 && m < 2.5)) return;
   const cal = store.get('pace', {});
-  const k = voiceEl.value || 'default';
+  const k = segVoiceKey;
   cal[k] = cal[k] ? cal[k] * 0.6 + m * 0.4 : m;
   store.set('pace', cal);
 }
 
 function idxForUnits(u){
-  for(let k = plan.length - 1; k >= 0; k--) if(u >= plan[k]) return k;
-  return 0;
+  for(let k = plan.length - 1; k >= 0; k--) if(u >= plan[k]) return segLo + k;
+  return segLo;
 }
 function indexFromChar(ci){
-  for(let i = tokens.length - 1; i >= 0; i--) if(ci >= tokens[i].start) return i;
-  return 0;
+  const abs = segChar0 + ci;
+  for(let i = segHi - 1; i >= segLo; i--) if(abs >= tokens[i].start) return i;
+  return segLo;
 }
 
-function startClock(){
+function startClock(lo, hi, char0, vkey){
   stopClock();
-  buildPlan();
+  segLo = lo; segHi = hi; segChar0 = char0; segVoiceKey = vkey || 'default';
+  buildPlan(lo, hi);
   unitsPerSec = rate / paceMul();
   speechT0 = clockStart = performance.now();
   lastIdx = -1;
@@ -466,7 +567,7 @@ function startClock(){
 function tick(){
   if(!clockOn) return;
   const u = ((performance.now() - clockStart) / 1000 + LEAD) * unitsPerSec;
-  const i = Math.min(idxForUnits(u), tokens.length - 1);
+  const i = Math.min(idxForUnits(u), segHi - 1);
   if(i !== lastIdx){ lastIdx = i; setActive(i); }
   if(u < totalUnits) rafId = requestAnimationFrame(tick);
 }
@@ -479,13 +580,15 @@ function stopClock(){
 /* A boundary event is ground truth: correct the speed, then snap the phase. */
 function resync(charIndex){
   const i = indexFromChar(charIndex);
+  const p = plan[i - segLo];
+  if(p == null) return;
   const now = performance.now();
   const elapsed = (now - speechT0) / 1000;
-  if(elapsed > 0.45 && plan[i] > 0.8){
-    const observed = plan[i] / elapsed;
+  if(elapsed > 0.45 && p > 0.8){
+    const observed = p / elapsed;
     if(observed > 0.3 && observed < 4) unitsPerSec = unitsPerSec * 0.4 + observed * 0.6;
   }
-  clockStart = now - (plan[i] / unitsPerSec - LEAD) * 1000;
+  clockStart = now - (p / unitsPerSec - LEAD) * 1000;
   if(i !== lastIdx){ lastIdx = i; setActive(i); }
   if(!clockOn){ clockOn = true; tick(); }
 }
@@ -512,13 +615,34 @@ function loadVoices(){
             || voices.find(v => v.localService)
             || voices[0];
   if(pick){ voiceEl.value = pick.voiceURI; vlangEl.textContent = pick.lang.replace('_','-'); }
+
+  koVoices = all.filter(v => /^ko/i.test(v.lang)).sort((a,b) => (b.localService - a.localService));
+  const ksaved = store.get('kvoice', null);
+  kvoiceEl.innerHTML = '';
+  koVoices.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v.voiceURI;
+    o.textContent = v.name + (v.localService ? '' : ' · online');
+    kvoiceEl.appendChild(o);
+  });
+  const kpick = koVoices.find(v => v.voiceURI === ksaved) || koVoices[0];
+  if(kpick){ kvoiceEl.value = kpick.voiceURI; klangEl.textContent = kpick.lang.replace('_','-'); }
+  else { klangEl.textContent = 'none'; }
+  updateModeUI();
 }
 if(synth){
   loadVoices();
   synth.onvoiceschanged = loadVoices;
   [120, 400, 1000, 2200].forEach(ms => setTimeout(loadVoices, ms)); // iOS populates late
 }
-function currentVoice(){ return voices.find(v => v.voiceURI === voiceEl.value) || null; }
+function currentVoice(lang){
+  if(lang === 'ko') return koVoices.find(v => v.voiceURI === kvoiceEl.value) || koVoices[0] || null;
+  return voices.find(v => v.voiceURI === voiceEl.value) || null;
+}
+function voiceKey(lang){
+  const v = currentVoice(lang);
+  return v ? v.voiceURI : (lang === 'ko' ? 'ko-default' : 'en-default');
+}
 
 /* ---------- speaking ---------- */
 function setBusy(on){
@@ -528,30 +652,30 @@ function setBusy(on){
   speakLabel.textContent = on ? 'Speaking…' : 'Speak';
 }
 
-function utter(str){
+function utter(str, lang){
   const u = new SpeechSynthesisUtterance(str);
-  const v = currentVoice();
-  if(v){ u.voice = v; u.lang = v.lang; } else { u.lang = 'en-US'; }
+  const v = currentVoice(lang);
+  if(v){ u.voice = v; u.lang = v.lang; } else { u.lang = lang === 'ko' ? 'ko-KR' : 'en-US'; }
   u.rate = rate; u.pitch = 1; u.volume = 1;
   return u;
 }
 
-function speakNow(str, onDone){
-  const u = utter(str);
+function speakNow(str, lang, clock, onDone){
+  const u = utter(str, lang);
   gotBoundary = false;
 
   u.onstart = () => {
     setBusy(true);
-    if(!singleWordMode) startClock();   // no blind delay — corrections come later
+    if(clock) startClock(clock.lo, clock.hi, clock.char0, voiceKey(lang));
   };
   u.onboundary = (e) => {
-    if(singleWordMode) return;
+    if(!clock) return;
     if(e.name && e.name !== 'word') return;
     gotBoundary = true;
     resync(e.charIndex);
   };
   u.onend = () => {
-    if(!singleWordMode){
+    if(clock){
       learnPace((performance.now() - speechT0) / 1000);
       stopClock();
     }
@@ -564,39 +688,71 @@ function speakNow(str, onDone){
   setTimeout(() => synth.speak(u), 80);
 }
 
+/* Order the segments for playback: within each line, EN→KO or KO→EN. */
+function buildSequence(){
+  const byLine = [];
+  segments.forEach((s,i) => {
+    if(!byLine[s.line]) byLine[s.line] = [];
+    byLine[s.line].push(i);
+  });
+  const seq = [];
+  byLine.forEach(group => {
+    if(!group) return;
+    let g = group.slice();
+    if(order === 'ko-en'){
+      const ko = g.filter(i => segments[i].lang === 'ko');
+      const en = g.filter(i => segments[i].lang === 'en');
+      g = ko.concat(en);
+    }
+    g.forEach(i => { if(speakable(segments[i])) seq.push(i); });
+  });
+  return seq;
+}
+function speakable(s){
+  if(s.lang === 'ko' && !koVoices.length) return false;   // device has no Korean voice
+  return true;
+}
+
 function speakSentence(){
   if(!synth) return;
   const t = textEl.value.trim();
   if(!t) { textEl.focus(); return; }
   unlock();
-  singleWordMode = false;
   renderStage();
-  remaining = repeat;
+  const seq = buildSequence();
+  if(!seq.length) return;
   pushHistory(t);
+  remaining = repeat;
 
-  const run = () => {
-    speakNow(t, () => {
+  let pos = 0;
+  const step = () => {
+    if(pos >= seq.length){
       remaining--;
-      if(remaining > 0){
-        setTimeout(() => { clearActive(); run(); }, 420);
-      } else {
-        setBusy(false);
-        setTimeout(clearActive, 700);
-      }
+      if(remaining > 0){ pos = 0; setTimeout(() => { clearActive(); step(); }, 620); }
+      else { setBusy(false); setTimeout(clearActive, 700); }
+      return;
+    }
+    const s = segments[seq[pos]];
+    const next = segments[seq[pos + 1]];
+    const gap = !next ? 0 : (next.line !== s.line ? 620 : 340);  // longer pause between pairs
+    speakNow(s.text, s.lang, { lo:s.lo, hi:s.hi, char0:tokens[s.lo].start }, () => {
+      pos++;
+      setTimeout(step, gap);
     });
   };
-  run();
+  step();
 }
 
 function speakWord(i){
-  if(!synth || !tokens[i]) return;
+  if(!synth || !tokens[i] || tokens[i].sep) return;
   unlock();
   stopAll(true);
-  singleWordMode = true;
+  const lang = tokens[i].lang || 'en';
+  if(lang === 'ko' && !koVoices.length) return;
   const els = stageEl.querySelectorAll('.w');
-  els.forEach((el,k) => { el.classList.remove('done'); el.classList.toggle('on', k === i); });
-  const clean = tokens[i].w.replace(/^[^\w'’-]+|[^\w'’-]+$/g,'') || tokens[i].w;
-  speakNow(clean, () => {
+  els.forEach(el => { el.classList.remove('done'); el.classList.toggle('on', +el.dataset.i === i); });
+  const clean = tokens[i].w.replace(/^[^\w'’\u3131-\uD7A3-]+|[^\w'’\u3131-\uD7A3-]+$/g,'') || tokens[i].w;
+  speakNow(clean, lang, null, () => {
     setBusy(false);
     setTimeout(() => { els.forEach(el => el.classList.remove('on')); }, 450);
   });
@@ -670,10 +826,25 @@ repEl.querySelectorAll('button').forEach(b => {
   });
 });
 
+orderEl.querySelectorAll('button').forEach(b => {
+  if(b.dataset.o === order){ orderEl.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); }
+  b.addEventListener('click', () => {
+    order = b.dataset.o;
+    store.set('order', order);
+    orderEl.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  });
+});
+
 voiceEl.addEventListener('change', () => {
   store.set('voice', voiceEl.value);
-  const v = currentVoice();
+  const v = currentVoice('en');
   if(v) vlangEl.textContent = v.lang.replace('_','-');
+});
+
+kvoiceEl.addEventListener('change', () => {
+  store.set('kvoice', kvoiceEl.value);
+  const v = currentVoice('ko');
+  if(v) klangEl.textContent = v.lang.replace('_','-');
 });
 
 $('clear').addEventListener('click', () => { history = []; store.set('history', history); renderHistory(); });
