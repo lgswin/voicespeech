@@ -179,6 +179,18 @@
   }
   .ctl .lab b{color:var(--amber);font-weight:600;letter-spacing:.04em;font-size:11.5px}
 
+  /* speak / stop / speed / repeat as four equal columns on one line */
+  .row.bar{align-items:stretch}
+  .row.bar > *{flex:1;min-width:0}
+  .row.bar .speak{height:58px;font-size:13px;padding:0 2px;gap:5px}
+  .row.bar .speak svg{width:12px;height:12px}
+  .row.bar .icon{width:auto;height:58px}
+  .ctl.compact{padding:7px 9px;height:58px;display:flex;flex-direction:column;justify-content:center}
+  .ctl.compact .lab{margin-bottom:5px;font-size:8.5px}
+  .ctl.compact .lab b{font-size:10px}
+  .ctl.compact .seg{padding:2px}
+  .ctl.compact .seg button{height:24px;font-size:10px}
+
   input[type=range]{
     -webkit-appearance:none;appearance:none;width:100%;height:16px;background:none;margin:0;display:block;
   }
@@ -254,7 +266,13 @@
       padding-right:calc(9px + env(safe-area-inset-right));
     }
     .stage{font-size:13px;height:88px}
-    .speak{font-size:15.5px}
+    .row.bar{gap:6px}
+    .row.bar .speak{font-size:11px;gap:3px;padding:0}
+    .row.bar .speak svg{width:11px;height:11px}
+    .ctl.compact{padding:6px 6px}
+    .ctl.compact .lab{font-size:7.5px;margin-bottom:4px}
+    .ctl.compact .lab b{font-size:9px}
+    .ctl.compact .seg button{font-size:9px;height:22px}
   }
   @media (prefers-reduced-motion:reduce){
     *{transition:none !important}
@@ -280,7 +298,7 @@
     <div class="count" id="count">0</div>
   </div>
 
-  <div class="row">
+  <div class="row bar">
     <button class="speak" id="speak">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 6h2.4L9 2.6v10.8L5.4 10H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/><path d="M11.2 5.1a.8.8 0 0 1 1.1.1A4.2 4.2 0 0 1 13.4 8a4.2 4.2 0 0 1-1.1 2.8.8.8 0 1 1-1.2-1 2.6 2.6 0 0 0 .7-1.8 2.6 2.6 0 0 0-.7-1.8.8.8 0 0 1 .1-1.1z"/></svg>
       <span id="speakLabel">Speak</span>
@@ -288,14 +306,11 @@
     <button class="icon" id="stop" title="Stop" disabled aria-label="Stop">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>
     </button>
-  </div>
-
-  <div class="row">
-    <div class="ctl">
+    <div class="ctl compact">
       <div class="lab"><span>Speed</span><b id="rateVal">1.00×</b></div>
       <input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="1">
     </div>
-    <div class="ctl" style="flex:0 0 132px">
+    <div class="ctl compact">
       <div class="lab"><span>Repeat</span></div>
       <div class="seg" id="rep" style="border:none;background:none;padding:0">
         <button data-n="1" class="on">1×</button>
@@ -499,10 +514,15 @@ function setActive(i){
   if(activeEl) scrollToActive(activeEl);
 }
 
-/* Keep only the word being spoken in view — the stage window scrolls, it doesn't expand. */
+/* Keep only the word being spoken in view — the stage window scrolls, it doesn't expand.
+   Measured via getBoundingClientRect (not offsetTop) so it centers correctly regardless
+   of which ancestor ends up as the offsetParent. */
 function scrollToActive(el){
-  const top = el.offsetTop - (stageEl.clientHeight/2) + (el.offsetHeight/2);
-  stageEl.scrollTop = Math.max(0, top);
+  const stageRect = stageEl.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const delta = (elRect.top + elRect.height/2) - (stageRect.top + stageRect.height/2);
+  const max = stageEl.scrollHeight - stageEl.clientHeight;
+  stageEl.scrollTop = Math.max(0, Math.min(stageEl.scrollTop + delta, max));
 }
 
 function clearActive(){

@@ -1,11 +1,11 @@
 // SAYFLOW — offline shell. Bump CACHE when you edit index.html.
-const CACHE = 'sayflow-v3';
+const CACHE = 'sayflow-v6';
 const ASSETS = ['./', './index.html'];
- 
+
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
- 
+
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
@@ -13,7 +13,7 @@ self.addEventListener('activate', e => {
       .then(() => self.clients.claim())
   );
 });
- 
+
 // Network-first so a redeploy is picked up, cache-first as the offline fallback.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
@@ -27,4 +27,3 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
   );
 });
- 
