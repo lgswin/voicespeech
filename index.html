@@ -189,7 +189,11 @@
   .ctl.compact .lab{margin-bottom:5px;font-size:8.5px}
   .ctl.compact .lab b{font-size:10px}
   .ctl.compact .seg{padding:2px}
-  .ctl.compact .seg button{height:24px;font-size:10px}
+  .ctl.compact .seg button{
+    height:24px;font-size:9.5px;padding:0 2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .ctl.compact select{font-size:12px}
 
   input[type=range]{
     -webkit-appearance:none;appearance:none;width:100%;height:16px;background:none;margin:0;display:block;
@@ -273,6 +277,7 @@
     .ctl.compact .lab{font-size:7.5px;margin-bottom:4px}
     .ctl.compact .lab b{font-size:9px}
     .ctl.compact .seg button{font-size:9px;height:22px}
+    .ctl.compact select{font-size:10.5px}
   }
   @media (prefers-reduced-motion:reduce){
     *{transition:none !important}
@@ -320,22 +325,19 @@
     </div>
   </div>
 
-  <div class="row" id="orderRow" style="display:none">
-    <div class="ctl">
+  <div class="row">
+    <div class="ctl compact" id="orderRow" style="display:none">
       <div class="lab"><span>Order</span><b id="orderNote"></b></div>
       <div class="seg" id="order" style="border:none;background:none;padding:0">
         <button data-o="en-ko" class="on">EN → 한국어</button>
         <button data-o="ko-en">한국어 → EN</button>
       </div>
     </div>
-  </div>
-
-  <div class="row">
-    <div class="ctl">
+    <div class="ctl compact">
       <div class="lab"><span>English voice</span><b id="vlang">—</b></div>
       <select id="voice"><option>Loading…</option></select>
     </div>
-    <div class="ctl" id="kvoiceRow" style="display:none">
+    <div class="ctl compact" id="kvoiceRow" style="display:none">
       <div class="lab"><span>Korean voice</span><b id="klang">—</b></div>
       <select id="kvoice"></select>
     </div>
@@ -494,7 +496,7 @@ function renderStage(){
 /* Pair controls only appear once there is actually Korean in the text. */
 function updateModeUI(){
   const pair = hasKo && hasEn;
-  if(orderRow) orderRow.style.display = pair ? 'flex' : 'none';
+  if(orderRow) orderRow.style.display = pair ? 'block' : 'none';
   if(kvoiceRow) kvoiceRow.style.display = hasKo ? 'block' : 'none';
   if(orderNote) orderNote.textContent = hasKo && !koVoices.length ? 'no Korean voice' : '';
 }
@@ -832,10 +834,42 @@ function renderHistory(){
     const row = document.createElement('div'); row.className = 'ritem';
     const s = document.createElement('span'); s.textContent = t;
     s.onclick = () => { textEl.value = t; renderStage(); speakSentence(); window.scrollTo({top:0,behavior:'smooth'}); };
+    const sh = document.createElement('button'); sh.innerHTML = shareIconSVG; sh.setAttribute('aria-label','Share');
+    sh.onclick = (e) => { e.stopPropagation(); shareText(t, sh); };
     const x = document.createElement('button'); x.textContent = '×'; x.setAttribute('aria-label','Remove');
     x.onclick = () => { history.splice(i,1); store.set('history', history); renderHistory(); };
-    row.append(s,x); rlistEl.appendChild(row);
+    row.append(s,sh,x); rlistEl.appendChild(row);
   });
+}
+
+/* ---------- sharing a saved sentence to another device ---------- */
+const shareIconSVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M8 2L5.2 4.8M8 2l2.8 2.8"/><path d="M3.5 7.5V13a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V7.5"/></svg>';
+
+function shareLink(t){
+  const url = new URL(location.href);
+  url.search = ''; url.hash = '';
+  url.searchParams.set('t', t);
+  return url.toString();
+}
+
+async function shareText(t, btn){
+  const url = shareLink(t);
+  if(navigator.share){
+    try { await navigator.share({ title:'SAYFLOW', text:t, url }); return; }
+    catch(e){ if(e && e.name === 'AbortError') return; }   // user cancelled the sheet — don't fall through to clipboard
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    flashLabel(btn, '✓');
+  } catch(e){
+    flashLabel(btn, '✕');
+  }
+}
+function flashLabel(btn, mark){
+  if(!btn) return;
+  const prev = btn.innerHTML;
+  btn.innerHTML = mark;
+  setTimeout(() => { btn.innerHTML = prev; }, 1100);
 }
 
 /* ---------- wiring ---------- */
@@ -949,7 +983,13 @@ if('serviceWorker' in navigator && location.protocol.startsWith('http')){
 }
 
 /* ---------- boot ---------- */
-textEl.value = store.get('last', '');
+/* A shared link (?t=...) takes priority over the last-typed text, then gets cleaned from the URL. */
+const sharedText = new URL(location.href).searchParams.get('t');
+textEl.value = sharedText != null ? sharedText : store.get('last', '');
+if(sharedText != null){
+  store.set('last', sharedText);
+  window.history.replaceState(null, '', location.pathname);   // note: window.history — the local `history` var is the Recent-list array
+}
 renderStage();
 renderHistory();
 textEl.addEventListener('input', () => store.set('last', textEl.value));

@@ -1,5 +1,5 @@
 // SAYFLOW — offline shell. Bump CACHE when you edit index.html.
-const CACHE = 'sayflow-v8';
+const CACHE = 'sayflow-v10';
 const ASSETS = ['./', './index.html'];
 
 self.addEventListener('install', e => {
