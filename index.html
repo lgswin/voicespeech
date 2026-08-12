@@ -225,10 +225,22 @@
     color:var(--mute);display:flex;justify-content:space-between;align-items:center;
     padding-bottom:9px;border-bottom:1px solid var(--line);
   }
+  .rplay{display:flex;gap:6px}
+  .rplay button{
+    display:flex;align-items:center;gap:4px;
+    background:none;border:1px solid var(--line);border-radius:7px;
+    color:var(--mute);font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    padding:4px 8px;cursor:pointer;transition:color .12s ease,border-color .12s ease,background .12s ease;
+  }
+  .rplay button.on{color:var(--amber);border-color:var(--amber-edge);background:var(--amber-soft)}
+  .rplay button:disabled{opacity:.35;cursor:default}
   .ritem{
     display:flex;align-items:center;gap:10px;
     padding:12px 0;border-bottom:1px solid var(--line);
+    transition:background .15s ease;
   }
+  .ritem.playing{background:var(--amber-soft);border-radius:8px;padding-left:8px;padding-right:8px;margin:0 -8px}
+  .ritem.playing span{color:var(--amber)}
   .ritem span{
     flex:1;min-width:0;font-family:var(--serif);font-size:16px;color:#C6BCA8;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
@@ -343,7 +355,19 @@
   </div>
 
   <div class="recent">
-    <div class="rhead"><span>Recent</span></div>
+    <div class="rhead">
+      <span>Recent</span>
+      <div class="rplay">
+        <button id="playSeq" title="Play list in order" aria-label="Play list in order">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.3v11.4a.8.8 0 0 0 1.22.68l9-5.7a.8.8 0 0 0 0-1.36l-9-5.7A.8.8 0 0 0 4 2.3z"/></svg>
+          <span>순차</span>
+        </button>
+        <button id="playShuffle" title="Play list shuffled" aria-label="Play list shuffled">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+          <span>랜덤</span>
+        </button>
+      </div>
+    </div>
     <div id="rlist"><div class="rempty">Sentences you speak will collect here.</div></div>
   </div>
 
@@ -365,7 +389,8 @@ const stageEl=$('stage'), meterEl=$('meter'), textEl=$('text'), countEl=$('count
       rateEl=$('rate'), rateVal=$('rateVal'), repEl=$('rep'), voiceEl=$('voice'),
       vlangEl=$('vlang'), rlistEl=$('rlist'), dotEl=$('dot'), statusEl=$('statusText'),
       kvoiceEl=$('kvoice'), klangEl=$('klang'), kvoiceRow=$('kvoiceRow'),
-      orderRow=$('orderRow'), orderEl=$('order'), orderNote=$('orderNote');
+      orderRow=$('orderRow'), orderEl=$('order'), orderNote=$('orderNote'),
+      playSeqBtn=$('playSeq'), playShuffleBtn=$('playShuffle');
 
 if(!synth){ $('warn').classList.add('show'); speakBtn.disabled = true; }
 
@@ -751,7 +776,30 @@ function speakable(s){
   return true;
 }
 
-function speakSentence(){
+function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+/* Speaks one pass over a built sequence. Resolves true if it played through to the end,
+   false if a Stop (or a newer play/playlist) invalidated `token` partway through. */
+function playSeqOnce(seq, token){
+  return new Promise(resolve => {
+    let pos = 0;
+    const step = () => {
+      if(token !== playToken){ resolve(false); return; }
+      if(pos >= seq.length){ resolve(true); return; }
+      const s = segments[seq[pos]];
+      const next = segments[seq[pos + 1]];
+      const gap = !next ? 0 : (next.line !== s.line ? 620 : 340);   // longer pause between pairs
+      speakNow(s.text, s.lang, { lo:s.lo, hi:s.hi, char0:tokens[s.lo].start }, () => {
+        if(token !== playToken){ resolve(false); return; }
+        pos++;
+        setTimeout(step, gap);
+      });
+    };
+    step();
+  });
+}
+
+async function speakSentence(){
   if(!synth) return;
   const t = textEl.value.trim();
   if(!t) { textEl.focus(); return; }
@@ -760,28 +808,79 @@ function speakSentence(){
   const seq = buildSequence();
   if(!seq.length) return;
   pushHistory(t);
-  remaining = repeat === 'inf' ? Infinity : repeat;
 
-  const token = ++playToken;   // invalidates any earlier speak/repeat chain still in flight
-  let pos = 0;
-  const step = () => {
-    if(token !== playToken) return;
-    if(pos >= seq.length){
-      remaining--;
-      if(remaining > 0){ pos = 0; setTimeout(() => { if(token === playToken){ clearActive(); step(); } }, 620); }
-      else { setBusy(false); setTimeout(() => { if(token === playToken) clearActive(); }, 700); }
-      return;
-    }
-    const s = segments[seq[pos]];
-    const next = segments[seq[pos + 1]];
-    const gap = !next ? 0 : (next.line !== s.line ? 620 : 340);  // longer pause between pairs
-    speakNow(s.text, s.lang, { lo:s.lo, hi:s.hi, char0:tokens[s.lo].start }, () => {
+  const token = ++playToken;   // invalidates any earlier speak/repeat/playlist chain still in flight
+  let n = repeat === 'inf' ? Infinity : repeat;
+  while(n > 0){
+    const ok = await playSeqOnce(seq, token);
+    if(!ok) return;            // stopped mid-way — leave state as stopAll() left it
+    n--;
+    if(n > 0){
+      clearActive();
+      await wait(620);
       if(token !== playToken) return;
-      pos++;
-      setTimeout(() => { if(token === playToken) step(); }, gap);
-    });
-  };
-  step();
+    }
+  }
+  setBusy(false);
+  await wait(700);
+  if(token === playToken) clearActive();
+}
+
+/* ---------- play every saved sentence, in order or shuffled ---------- */
+let playlistMode = null;   // 'seq' | 'random' | null
+
+function shuffle(arr){
+  const a = arr.slice();
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function highlightRecentRow(idx){
+  rlistEl.querySelectorAll('.ritem').forEach(el => {
+    el.classList.toggle('playing', +el.dataset.i === idx);
+  });
+}
+
+function updatePlaylistButtons(){
+  if(playSeqBtn) playSeqBtn.classList.toggle('on', playlistMode === 'seq');
+  if(playShuffleBtn) playShuffleBtn.classList.toggle('on', playlistMode === 'random');
+}
+
+async function playAllRecent(mode){
+  if(!synth || !history.length) return;
+  unlock();
+  const order = mode === 'random' ? shuffle(history.map((_, i) => i)) : history.map((_, i) => i);
+  const token = ++playToken;
+  playlistMode = mode;
+  updatePlaylistButtons();
+
+  for(const idx of order){
+    if(token !== playToken) break;
+    const t = history[idx];
+    if(t == null) continue;   // item was deleted mid-playlist — skip rather than speak "undefined"
+    textEl.value = t;
+    store.set('last', t);
+    highlightRecentRow(idx);
+    renderStage();
+    const seq = buildSequence();
+    if(seq.length){
+      const ok = await playSeqOnce(seq, token);
+      if(!ok) break;
+    }
+    if(token !== playToken) break;
+    clearActive();
+    await wait(480);
+  }
+
+  highlightRecentRow(-1);
+  if(token === playToken){
+    setBusy(false);
+    playlistMode = null;
+    updatePlaylistButtons();
+  }
 }
 
 function speakWord(i){
@@ -800,11 +899,12 @@ function speakWord(i){
 }
 
 function stopAll(quiet){
-  playToken++;   // invalidate any pending repeat/gap timeouts, including an infinite loop
+  playToken++;   // invalidate any pending repeat/gap timeouts, including an infinite loop or playlist
   stopClock();
   remaining = 0;
   if(synth) synth.cancel();
   setBusy(false);
+  if(playlistMode){ playlistMode = null; updatePlaylistButtons(); highlightRecentRow(-1); }
   if(!quiet) clearActive();
 }
 
@@ -824,13 +924,15 @@ function pushHistory(t){
   renderHistory();
 }
 function renderHistory(){
+  if(playSeqBtn) playSeqBtn.disabled = !history.length;
+  if(playShuffleBtn) playShuffleBtn.disabled = !history.length;
   rlistEl.innerHTML = '';
   if(!history.length){
     rlistEl.innerHTML = '<div class="rempty">Sentences you speak will collect here.</div>';
     return;
   }
   history.forEach((t,i) => {
-    const row = document.createElement('div'); row.className = 'ritem';
+    const row = document.createElement('div'); row.className = 'ritem'; row.dataset.i = i;
     const s = document.createElement('span'); s.textContent = t;
     s.onclick = () => { textEl.value = t; renderStage(); speakSentence(); window.scrollTo({top:0,behavior:'smooth'}); };
     const sh = document.createElement('button'); sh.innerHTML = shareIconSVG; sh.setAttribute('aria-label','Share');
@@ -923,6 +1025,14 @@ stageEl.addEventListener('click', e => {
 });
 speakBtn.addEventListener('click', speakSentence);
 stopBtn.addEventListener('click', () => stopAll(false));
+
+/* tapping the active mode again stops the playlist; tapping the other mode switches straight to it */
+if(playSeqBtn) playSeqBtn.addEventListener('click', () => {
+  if(playlistMode === 'seq') stopAll(false); else playAllRecent('seq');
+});
+if(playShuffleBtn) playShuffleBtn.addEventListener('click', () => {
+  if(playlistMode === 'random') stopAll(false); else playAllRecent('random');
+});
 
 rateEl.value = rate;
 rateVal.textContent = Number(rate).toFixed(2) + '×';
