@@ -225,10 +225,6 @@
     color:var(--mute);display:flex;justify-content:space-between;align-items:center;
     padding-bottom:9px;border-bottom:1px solid var(--line);
   }
-  .rhead button{
-    background:none;border:none;color:#4C6169;font-family:var(--mono);
-    font-size:10px;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;padding:0;
-  }
   .ritem{
     display:flex;align-items:center;gap:10px;
     padding:12px 0;border-bottom:1px solid var(--line);
@@ -243,6 +239,9 @@
     font-size:15px;line-height:1;cursor:pointer;border-radius:6px;
   }
   .rempty{font-size:13.5px;color:#4C6169;padding:14px 0}
+  /* while a share sheet is open, block taps on every other item's share/delete button so it's
+     unambiguous which sentence is being shared and a second tap can't queue behind the first */
+  #rlist.busy .ritem button{pointer-events:none;opacity:.45}
 
   .foot{
     margin-top:26px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;
@@ -344,7 +343,7 @@
   </div>
 
   <div class="recent">
-    <div class="rhead"><span>Recent</span><button id="clear">Clear</button></div>
+    <div class="rhead"><span>Recent</span></div>
     <div id="rlist"><div class="rempty">Sentences you speak will collect here.</div></div>
   </div>
 
@@ -880,19 +879,33 @@ function shareLink(t){
    Stay well under that and just share the sentence as plain text once a link risks tripping it. */
 const MAX_LINK_LEN = 1500;
 
+/* navigator.share() throws if a share sheet is already open. Without this guard, tapping a second
+   item's share button while the first item's sheet is still up silently no-ops the second call —
+   the sheet the OS actually shows (and whatever gets AirDropped) stays the FIRST item you tapped,
+   which reads as "the wrong sentence got shared" even though each button passes its own correct text. */
+let sharing = false;
+
 async function shareText(t, btn){
-  const link = canDeepLink() ? shareLink(t) : null;
-  const useLink = !!link && link.length <= MAX_LINK_LEN;
-  const payload = useLink ? { title:'SAYFLOW', text:t, url:link } : { title:'SAYFLOW', text:t };
-  if(navigator.share){
-    try { await navigator.share(payload); return; }
-    catch(e){ if(e && e.name === 'AbortError') return; }   // user cancelled the sheet — don't fall through to clipboard
-  }
+  if(sharing) return;
+  sharing = true;
+  rlistEl.classList.add('busy');
   try {
-    await navigator.clipboard.writeText(useLink ? link : t);
-    flashLabel(btn, '✓');
-  } catch(e){
-    flashLabel(btn, '✕');
+    const link = canDeepLink() ? shareLink(t) : null;
+    const useLink = !!link && link.length <= MAX_LINK_LEN;
+    const payload = useLink ? { title:'SAYFLOW', text:t, url:link } : { title:'SAYFLOW', text:t };
+    if(navigator.share){
+      try { await navigator.share(payload); return; }
+      catch(e){ if(e && e.name === 'AbortError') return; }   // user cancelled the sheet — don't fall through to clipboard
+    }
+    try {
+      await navigator.clipboard.writeText(useLink ? link : t);
+      flashLabel(btn, '✓');
+    } catch(e){
+      flashLabel(btn, '✕');
+    }
+  } finally {
+    sharing = false;
+    rlistEl.classList.remove('busy');
   }
 }
 function flashLabel(btn, mark){
@@ -953,7 +966,6 @@ kvoiceEl.addEventListener('change', () => {
   if(v) klangEl.textContent = v.lang.replace('_','-');
 });
 
-$('clear').addEventListener('click', () => { history = []; store.set('history', history); renderHistory(); });
 
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape'){ stopAll(false); }
@@ -1025,6 +1037,8 @@ textEl.value = sharedText != null ? sharedText : store.get('last', '');
 if(sharedText != null){
   store.set('last', sharedText);
   window.history.replaceState(null, '', location.pathname);   // note: window.history — the local `history` var is the Recent-list array
+  const trimmed = sharedText.trim();
+  if(trimmed) pushHistory(trimmed);   // additive: filters out an exact duplicate, then unshifts — never clears the rest of Recent
 }
 renderStage();
 renderHistory();
