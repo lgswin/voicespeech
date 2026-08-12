@@ -845,21 +845,51 @@ function renderHistory(){
 /* ---------- sharing a saved sentence to another device ---------- */
 const shareIconSVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M8 2L5.2 4.8M8 2l2.8 2.8"/><path d="M3.5 7.5V13a.5.5 0 0 0 .5.5h8a.5.5 0 0 0 .5-.5V7.5"/></svg>';
 
+/* base64url of the UTF-8 bytes — ~4/3 expansion vs. encodeURIComponent's ~3x for Korean text,
+   so a Korean sentence doesn't blow the URL past what AirDrop/share-sheet "open URL" handlers allow. */
+function encodeText(t){
+  const bytes = new TextEncoder().encode(t);
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function decodeText(b){
+  let s = b.replace(/-/g,'+').replace(/_/g,'/');
+  while(s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+/* A deep link only means anything if this page itself lives at a real, stable http(s) address —
+   a file:// path is specific to this device and can't resolve on whoever receives the AirDrop. */
+function canDeepLink(){
+  return /^https?:$/.test(location.protocol);
+}
+
 function shareLink(t){
   const url = new URL(location.href);
   url.search = ''; url.hash = '';
-  url.searchParams.set('t', t);
+  url.searchParams.set('b', encodeText(t));
   return url.toString();
 }
 
+/* Historically, "open this URL" handlers (AirDrop, share sheets, some OS intents) reject/mangle
+   anything past a couple thousand characters — a long link throws "URI Too Long" instead of sharing.
+   Stay well under that and just share the sentence as plain text once a link risks tripping it. */
+const MAX_LINK_LEN = 1500;
+
 async function shareText(t, btn){
-  const url = shareLink(t);
+  const link = canDeepLink() ? shareLink(t) : null;
+  const useLink = !!link && link.length <= MAX_LINK_LEN;
+  const payload = useLink ? { title:'SAYFLOW', text:t, url:link } : { title:'SAYFLOW', text:t };
   if(navigator.share){
-    try { await navigator.share({ title:'SAYFLOW', text:t, url }); return; }
+    try { await navigator.share(payload); return; }
     catch(e){ if(e && e.name === 'AbortError') return; }   // user cancelled the sheet — don't fall through to clipboard
   }
   try {
-    await navigator.clipboard.writeText(url);
+    await navigator.clipboard.writeText(useLink ? link : t);
     flashLabel(btn, '✓');
   } catch(e){
     flashLabel(btn, '✕');
@@ -983,8 +1013,14 @@ if('serviceWorker' in navigator && location.protocol.startsWith('http')){
 }
 
 /* ---------- boot ---------- */
-/* A shared link (?t=...) takes priority over the last-typed text, then gets cleaned from the URL. */
-const sharedText = new URL(location.href).searchParams.get('t');
+/* A shared link (?b=...) takes priority over the last-typed text, then gets cleaned from the URL. */
+function readSharedText(){
+  const params = new URL(location.href).searchParams;
+  const b = params.get('b');
+  if(b != null){ try { return decodeText(b); } catch(e){ return null; } }
+  return params.get('t');   // legacy plain-text param, in case an old link is still floating around
+}
+const sharedText = readSharedText();
 textEl.value = sharedText != null ? sharedText : store.get('last', '');
 if(sharedText != null){
   store.set('last', sharedText);
