@@ -67,14 +67,21 @@
 
   /* ---------- stage (signature) ---------- */
   .stage{
-    min-height:132px;
-    padding:6px 0 14px;
+    height:52px;
+    padding:6px 2px 14px;
     font-family:var(--serif);
-    font-size:21px;
-    line-height:1.42;
+    font-size:15px;
+    line-height:1.4;
     letter-spacing:-.005em;
     display:flex;flex-wrap:wrap;align-content:flex-start;gap:2px 0;
+    overflow-y:auto;
+    scroll-behavior:smooth;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+    mask-image:linear-gradient(to bottom,transparent 0,#000 10px,#000 calc(100% - 10px),transparent 100%);
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 10px,#000 calc(100% - 10px),transparent 100%);
   }
+  .stage::-webkit-scrollbar{display:none}
   .w{
     display:inline-block;
     padding:1px 5px;
@@ -104,7 +111,7 @@
   }
   .brk{flex-basis:100%;height:9px}
   .empty{
-    font-family:var(--serif);font-size:17px;font-style:italic;
+    font-family:var(--serif);font-size:14px;font-style:italic;
     color:#3E5158;line-height:1.5;padding:2px 0;
   }
   .meter{height:2px;background:var(--line);border-radius:2px;overflow:hidden;margin-bottom:22px}
@@ -246,7 +253,7 @@
       padding-left:calc(9px + env(safe-area-inset-left));
       padding-right:calc(9px + env(safe-area-inset-right));
     }
-    .stage{font-size:18px;min-height:118px}
+    .stage{font-size:13px;height:46px}
     .speak{font-size:15.5px}
   }
   @media (prefers-reduced-motion:reduce){
@@ -447,6 +454,7 @@ function renderStage(){
   buildSegments(t);
   countEl.textContent = t.length;
   stageEl.innerHTML = '';
+  stageEl.scrollTop = 0;
   if(!tokens.length){
     const d = document.createElement('div');
     d.className = 'empty';
@@ -479,17 +487,28 @@ function updateModeUI(){
 }
 
 function setActive(i){
+  let activeEl = null;
   stageEl.querySelectorAll('.w').forEach(el => {
     const k = +el.dataset.i;
-    el.classList.toggle('on', k === i);
+    const on = k === i;
+    el.classList.toggle('on', on);
     el.classList.toggle('done', k < i);
+    if(on) activeEl = el;
   });
   if(tokens.length) meterEl.style.width = ((i+1)/tokens.length*100) + '%';
+  if(activeEl) scrollToActive(activeEl);
+}
+
+/* Keep only the word being spoken in view — the stage window scrolls, it doesn't expand. */
+function scrollToActive(el){
+  const top = el.offsetTop - (stageEl.clientHeight/2) + (el.offsetHeight/2);
+  stageEl.scrollTop = Math.max(0, top);
 }
 
 function clearActive(){
   stageEl.querySelectorAll('.w').forEach(el => el.classList.remove('on','done'));
   meterEl.style.width = '0';
+  stageEl.scrollTop = 0;
 }
 
 /* ---------- word clock ----------
