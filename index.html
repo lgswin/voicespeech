@@ -315,7 +315,7 @@
       <div class="seg" id="rep" style="border:none;background:none;padding:0">
         <button data-n="1" class="on">1×</button>
         <button data-n="2">2×</button>
-        <button data-n="3">3×</button>
+        <button data-n="inf">∞</button>
       </div>
     </div>
   </div>
@@ -335,10 +335,7 @@
       <div class="lab"><span>English voice</span><b id="vlang">—</b></div>
       <select id="voice"><option>Loading…</option></select>
     </div>
-  </div>
-
-  <div class="row" id="kvoiceRow" style="display:none">
-    <div class="ctl">
+    <div class="ctl" id="kvoiceRow" style="display:none">
       <div class="lab"><span>Korean voice</span><b id="klang">—</b></div>
       <select id="kvoice"></select>
     </div>
@@ -395,6 +392,7 @@ let history = store.get('history', []);
 let remaining = 0;
 let gotBoundary = false;
 let unlocked = false;
+let playToken = 0;   // bumped on every stop/new speak so stale timeouts can't resurrect playback
 
 const ua = navigator.userAgent;
 const isApple = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg/.test(ua));
@@ -497,7 +495,7 @@ function renderStage(){
 function updateModeUI(){
   const pair = hasKo && hasEn;
   if(orderRow) orderRow.style.display = pair ? 'flex' : 'none';
-  if(kvoiceRow) kvoiceRow.style.display = hasKo ? 'flex' : 'none';
+  if(kvoiceRow) kvoiceRow.style.display = hasKo ? 'block' : 'none';
   if(orderNote) orderNote.textContent = hasKo && !koVoices.length ? 'no Korean voice' : '';
 }
 
@@ -761,22 +759,25 @@ function speakSentence(){
   const seq = buildSequence();
   if(!seq.length) return;
   pushHistory(t);
-  remaining = repeat;
+  remaining = repeat === 'inf' ? Infinity : repeat;
 
+  const token = ++playToken;   // invalidates any earlier speak/repeat chain still in flight
   let pos = 0;
   const step = () => {
+    if(token !== playToken) return;
     if(pos >= seq.length){
       remaining--;
-      if(remaining > 0){ pos = 0; setTimeout(() => { clearActive(); step(); }, 620); }
-      else { setBusy(false); setTimeout(clearActive, 700); }
+      if(remaining > 0){ pos = 0; setTimeout(() => { if(token === playToken){ clearActive(); step(); } }, 620); }
+      else { setBusy(false); setTimeout(() => { if(token === playToken) clearActive(); }, 700); }
       return;
     }
     const s = segments[seq[pos]];
     const next = segments[seq[pos + 1]];
     const gap = !next ? 0 : (next.line !== s.line ? 620 : 340);  // longer pause between pairs
     speakNow(s.text, s.lang, { lo:s.lo, hi:s.hi, char0:tokens[s.lo].start }, () => {
+      if(token !== playToken) return;
       pos++;
-      setTimeout(step, gap);
+      setTimeout(() => { if(token === playToken) step(); }, gap);
     });
   };
   step();
@@ -798,6 +799,7 @@ function speakWord(i){
 }
 
 function stopAll(quiet){
+  playToken++;   // invalidate any pending repeat/gap timeouts, including an infinite loop
   stopClock();
   remaining = 0;
   if(synth) synth.cancel();
@@ -857,9 +859,10 @@ rateVal.addEventListener('click', () => {
 });
 
 repEl.querySelectorAll('button').forEach(b => {
-  if(+b.dataset.n === repeat) { repEl.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); }
+  const val = b.dataset.n === 'inf' ? 'inf' : +b.dataset.n;
+  if(val === repeat) { repEl.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); }
   b.addEventListener('click', () => {
-    repeat = +b.dataset.n;
+    repeat = val;
     store.set('repeat', repeat);
     repEl.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
   });
