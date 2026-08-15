@@ -853,58 +853,18 @@ function updateTransportUI(){
     pauseBtn.innerHTML = playIconSVG;
     pauseBtn.title = 'Play';
     pauseBtn.setAttribute('aria-label', 'Play');
-    stopBgKeepAlive();
   } else if(active){
     statusEl.textContent = 'speaking';
     speakLabel.textContent = 'Speaking…';
     pauseBtn.innerHTML = pauseIconSVG;
     pauseBtn.title = 'Pause';
     pauseBtn.setAttribute('aria-label', 'Pause');
-    startBgKeepAlive();
   } else {
     statusEl.textContent = 'ready';
     speakLabel.textContent = 'Speak';
     pauseBtn.innerHTML = pauseIconSVG;
     pauseBtn.title = 'Pause';
     pauseBtn.setAttribute('aria-label', 'Pause');
-    stopBgKeepAlive();
-  }
-}
-
-/* Silent looping audio + Media Session so the browser treats this tab as "playing"
-   and is less likely to suspend speech synthesis / timers when backgrounded. */
-let bgAudio = null;
-function startBgKeepAlive(){
-  if(bgAudio) return;
-  try {
-    // Minimal silent WAV — marks the tab as audibly active for background playback
-    bgAudio = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
-    bgAudio.loop = true;
-    bgAudio.volume = 0.01;
-    bgAudio.play().catch(() => { bgAudio = null; });
-  } catch(e){ bgAudio = null; }
-  try {
-    if(navigator.mediaSession){
-      navigator.mediaSession.metadata = new MediaMetadata({ title: 'SAYFLOW', artist: 'Speaking' });
-      navigator.mediaSession.playbackState = 'playing';
-    }
-  } catch(e){}
-}
-function stopBgKeepAlive(){
-  if(bgAudio){
-    try { bgAudio.pause(); } catch(e){}
-    bgAudio = null;
-  }
-  try {
-    if(navigator.mediaSession) navigator.mediaSession.playbackState = 'none';
-  } catch(e){}
-}
-
-/* If the browser auto-paused us while backgrounded, nudge speech back to playing. */
-function ensureSpeaking(){
-  if(!synth || !speakingChain || paused) return;
-  if(synth.paused){
-    try { synth.resume(); } catch(e){}
   }
 }
 
@@ -1048,13 +1008,12 @@ function stopAll(quiet){
   if(!quiet) clearActive();
 }
 
-/* keep long text alive in Chrome (its engine stalls near 15s),
-   and resume if the browser auto-paused speech while the tab was backgrounded */
-if(synth){
+/* keep long text alive in Chrome (its engine stalls near 15s) */
+if(synth && !isApple){
   setInterval(() => {
-    if(!speakingChain || paused) return;
-    if(synth.paused){ try { synth.resume(); } catch(e){} return; }
-    if(!isApple && synth.speaking){ synth.pause(); synth.resume(); }
+    if(speakingChain && !paused && synth.speaking && !synth.paused){
+      synth.pause(); synth.resume();
+    }
   }, 9500);
 }
 
@@ -1230,13 +1189,11 @@ document.addEventListener('keydown', e => {
   }
   if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); speakSentence(); }
 });
-/* Keep speaking in the background: do not pause/cancel on hide.
-   When the tab returns (or while hidden), resume if the browser had auto-paused us. */
+/* Do not pause/cancel when the tab is backgrounded — let speech continue.
+   If the browser auto-paused while hidden, resume once the tab is visible again. */
 document.addEventListener('visibilitychange', () => {
-  if(speakingChain && !paused){
-    if(bgAudio && bgAudio.paused) bgAudio.play().catch(() => {});
-    ensureSpeaking();
-  }
+  if(document.hidden || !synth || !speakingChain || paused) return;
+  if(synth.paused){ try { synth.resume(); } catch(e){} }
 });
 
 if(!('ontouchstart' in window)) $('hint').textContent = '⌘↵ speak · esc pause · click a word';
