@@ -179,7 +179,7 @@
   }
   .ctl .lab b{color:var(--amber);font-weight:600;letter-spacing:.04em;font-size:11.5px}
 
-  /* speak / stop / speed / repeat as four equal columns on one line */
+  /* speak / pause / speed / repeat as four equal columns on one line */
   .row.bar{align-items:stretch}
   .row.bar > *{flex:1;min-width:0}
   .row.bar .speak{height:58px;font-size:13px;padding:0 2px;gap:5px}
@@ -319,8 +319,8 @@
       <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 6h2.4L9 2.6v10.8L5.4 10H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/><path d="M11.2 5.1a.8.8 0 0 1 1.1.1A4.2 4.2 0 0 1 13.4 8a4.2 4.2 0 0 1-1.1 2.8.8.8 0 1 1-1.2-1 2.6 2.6 0 0 0 .7-1.8 2.6 2.6 0 0 0-.7-1.8.8.8 0 0 1 .1-1.1z"/></svg>
       <span id="speakLabel">Speak</span>
     </button>
-    <button class="icon" id="stop" title="Stop" disabled aria-label="Stop">
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>
+    <button class="icon" id="pause" title="Pause" disabled aria-label="Pause">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>
     </button>
     <div class="ctl compact">
       <div class="lab"><span>Speed</span><b id="rateVal">1.00×</b></div>
@@ -385,12 +385,15 @@
 const synth = window.speechSynthesis;
 const $ = id => document.getElementById(id);
 const stageEl=$('stage'), meterEl=$('meter'), textEl=$('text'), countEl=$('count'),
-      speakBtn=$('speak'), speakLabel=$('speakLabel'), stopBtn=$('stop'),
+      speakBtn=$('speak'), speakLabel=$('speakLabel'), pauseBtn=$('pause'),
       rateEl=$('rate'), rateVal=$('rateVal'), repEl=$('rep'), voiceEl=$('voice'),
       vlangEl=$('vlang'), rlistEl=$('rlist'), dotEl=$('dot'), statusEl=$('statusText'),
       kvoiceEl=$('kvoice'), klangEl=$('klang'), kvoiceRow=$('kvoiceRow'),
       orderRow=$('orderRow'), orderEl=$('order'), orderNote=$('orderNote'),
       playSeqBtn=$('playSeq'), playShuffleBtn=$('playShuffle');
+
+const pauseIconSVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="3" y="2" width="3.5" height="12" rx="1"/><rect x="9.5" y="2" width="3.5" height="12" rx="1"/></svg>';
+const playIconSVG  = '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.3v11.4a.8.8 0 0 0 1.22.68l9-5.7a.8.8 0 0 0 0-1.36l-9-5.7A.8.8 0 0 0 4 2.3z"/></svg>';
 
 if(!synth){ $('warn').classList.add('show'); speakBtn.disabled = true; }
 
@@ -419,6 +422,11 @@ let remaining = 0;
 let gotBoundary = false;
 let unlocked = false;
 let playToken = 0;   // bumped on every stop/new speak so stale timeouts can't resurrect playback
+let speakingChain = false;  // true while a speak/playlist run is in progress (including pauses & gaps)
+let paused = false;
+let clockPausedAt = 0;
+let clockWasRunning = false;
+let resumeWaiters = [];
 
 const ua = navigator.userAgent;
 const isApple = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg/.test(ua));
@@ -709,10 +717,9 @@ function voiceKey(lang){
 
 /* ---------- speaking ---------- */
 function setBusy(on){
-  dotEl.classList.toggle('on', on);
-  statusEl.textContent = on ? 'speaking' : 'ready';
-  stopBtn.disabled = !on;
-  speakLabel.textContent = on ? 'Speaking…' : 'Speak';
+  speakingChain = !!on;
+  if(!on) clearPauseState();
+  updateTransportUI();
 }
 
 function utter(str, lang){
@@ -778,8 +785,91 @@ function speakable(s){
 
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
 
+/* Waits `ms` ms, freezing while paused. Returns false if playToken was invalidated. */
+async function gapWait(ms, token){
+  let left = ms;
+  while(true){
+    if(token !== playToken) return false;
+    while(paused){
+      await new Promise(r => { resumeWaiters.push(r); });
+      if(token !== playToken) return false;
+    }
+    if(left <= 0) return true;
+    const slice = Math.min(left, 50);
+    await wait(slice);
+    left -= slice;
+  }
+}
+
+function clearPauseState(){
+  paused = false;
+  clockPausedAt = 0;
+  clockWasRunning = false;
+  const waiters = resumeWaiters.splice(0);
+  waiters.forEach(r => r());
+}
+
+function pausePlayback(){
+  if(paused || !speakingChain) return;
+  paused = true;
+  clockWasRunning = clockOn;
+  if(clockOn){
+    clockOn = false;
+    if(rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    clockPausedAt = performance.now();
+  }
+  if(synth && synth.speaking && !synth.paused) synth.pause();
+  updateTransportUI();
+}
+
+function resumePlayback(){
+  if(!paused) return;
+  paused = false;
+  if(clockPausedAt){
+    const dt = performance.now() - clockPausedAt;
+    clockStart += dt;
+    speechT0 += dt;
+    clockPausedAt = 0;
+  }
+  if(clockWasRunning){
+    clockOn = true;
+    tick();
+  }
+  clockWasRunning = false;
+  if(synth && synth.paused) synth.resume();
+  const waiters = resumeWaiters.splice(0);
+  waiters.forEach(r => r());
+  updateTransportUI();
+}
+
+function updateTransportUI(){
+  const active = speakingChain;
+  pauseBtn.disabled = !active;
+  dotEl.classList.toggle('on', active && !paused);
+  if(paused){
+    statusEl.textContent = 'paused';
+    speakLabel.textContent = 'Paused';
+    pauseBtn.innerHTML = playIconSVG;
+    pauseBtn.title = 'Play';
+    pauseBtn.setAttribute('aria-label', 'Play');
+  } else if(active){
+    statusEl.textContent = 'speaking';
+    speakLabel.textContent = 'Speaking…';
+    pauseBtn.innerHTML = pauseIconSVG;
+    pauseBtn.title = 'Pause';
+    pauseBtn.setAttribute('aria-label', 'Pause');
+  } else {
+    statusEl.textContent = 'ready';
+    speakLabel.textContent = 'Speak';
+    pauseBtn.innerHTML = pauseIconSVG;
+    pauseBtn.title = 'Pause';
+    pauseBtn.setAttribute('aria-label', 'Pause');
+  }
+}
+
 /* Speaks one pass over a built sequence. Resolves true if it played through to the end,
-   false if a Stop (or a newer play/playlist) invalidated `token` partway through. */
+   false if stopped (or a newer play/playlist) invalidated `token` partway through. */
 function playSeqOnce(seq, token){
   return new Promise(resolve => {
     let pos = 0;
@@ -789,10 +879,12 @@ function playSeqOnce(seq, token){
       const s = segments[seq[pos]];
       const next = segments[seq[pos + 1]];
       const gap = !next ? 0 : (next.line !== s.line ? 620 : 340);   // longer pause between pairs
-      speakNow(s.text, s.lang, { lo:s.lo, hi:s.hi, char0:tokens[s.lo].start }, () => {
+      speakNow(s.text, s.lang, { lo:s.lo, hi:s.hi, char0:tokens[s.lo].start }, async () => {
         if(token !== playToken){ resolve(false); return; }
         pos++;
-        setTimeout(step, gap);
+        const ok = await gapWait(gap, token);
+        if(!ok){ resolve(false); return; }
+        step();
       });
     };
     step();
@@ -810,6 +902,9 @@ async function speakSentence(){
   pushHistory(t);
 
   const token = ++playToken;   // invalidates any earlier speak/repeat/playlist chain still in flight
+  clearPauseState();
+  speakingChain = true;
+  updateTransportUI();
   let n = repeat === 'inf' ? Infinity : repeat;
   while(n > 0){
     const ok = await playSeqOnce(seq, token);
@@ -817,8 +912,8 @@ async function speakSentence(){
     n--;
     if(n > 0){
       clearActive();
-      await wait(620);
-      if(token !== playToken) return;
+      const gapOk = await gapWait(620, token);
+      if(!gapOk) return;
     }
   }
   setBusy(false);
@@ -854,6 +949,9 @@ async function playAllRecent(mode){
   unlock();
   const order = mode === 'random' ? shuffle(history.map((_, i) => i)) : history.map((_, i) => i);
   const token = ++playToken;
+  clearPauseState();
+  speakingChain = true;
+  updateTransportUI();
   playlistMode = mode;
   updatePlaylistButtons();
 
@@ -872,7 +970,8 @@ async function playAllRecent(mode){
     }
     if(token !== playToken) break;
     clearActive();
-    await wait(480);
+    const gapOk = await gapWait(480, token);
+    if(!gapOk) break;
   }
 
   highlightRecentRow(-1);
@@ -902,6 +1001,7 @@ function stopAll(quiet){
   playToken++;   // invalidate any pending repeat/gap timeouts, including an infinite loop or playlist
   stopClock();
   remaining = 0;
+  clearPauseState();
   if(synth) synth.cancel();
   setBusy(false);
   if(playlistMode){ playlistMode = null; updatePlaylistButtons(); highlightRecentRow(-1); }
@@ -1024,7 +1124,10 @@ stageEl.addEventListener('click', e => {
   if(el) speakWord(+el.dataset.i);
 });
 speakBtn.addEventListener('click', speakSentence);
-stopBtn.addEventListener('click', () => stopAll(false));
+pauseBtn.addEventListener('click', () => {
+  if(paused) resumePlayback();
+  else pausePlayback();
+});
 
 /* tapping the active mode again stops the playlist; tapping the other mode switches straight to it */
 if(playSeqBtn) playSeqBtn.addEventListener('click', () => {
@@ -1078,13 +1181,16 @@ kvoiceEl.addEventListener('change', () => {
 
 
 document.addEventListener('keydown', e => {
-  if(e.key === 'Escape'){ stopAll(false); }
+  if(e.key === 'Escape'){
+    if(paused) stopAll(false);
+    else if(speakingChain) pausePlayback();
+  }
   if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); speakSentence(); }
 });
-document.addEventListener('visibilitychange', () => { if(document.hidden) stopAll(false); });
+document.addEventListener('visibilitychange', () => { if(document.hidden) pausePlayback(); });
 window.addEventListener('pagehide', () => { if(synth) synth.cancel(); });
 
-if(!('ontouchstart' in window)) $('hint').textContent = '⌘↵ speak · esc stop · click a word';
+if(!('ontouchstart' in window)) $('hint').textContent = '⌘↵ speak · esc pause · click a word';
 
 /* ---------- PWA: inline manifest + generated icons ---------- */
 function makeIcon(size){
